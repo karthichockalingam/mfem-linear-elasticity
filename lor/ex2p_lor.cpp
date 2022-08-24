@@ -42,8 +42,6 @@
 #include "mfem.hpp"
 #include <fstream>
 #include <iostream>
-#include <memory>
-
 
 using namespace std;
 using namespace mfem;
@@ -191,7 +189,7 @@ int main(int argc, char *argv[])
    ess_bdr = 0;
    ess_bdr[0] = 1;
    fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
-    
+
    // 10. Set up the parallel linear form b(.) which corresponds to the
    //     right-hand side of the FEM linear system. In this case, b_i equals the
    //     boundary integral of f*phi_i where f represents a "pull down" force on
@@ -248,55 +246,28 @@ int main(int argc, char *argv[])
    if (myid == 0) { cout << "matrix ... " << flush; }
    if (static_cond) { a->EnableStaticCondensation(); }
    a->Assemble();
- 
-   OperatorPtr A;
+
+   HypreParMatrix A;
    Vector B, X;
    a->FormLinearSystem(ess_tdof_list, x, *b, A, X, B);
-  
-
    if (myid == 0)
    {
       cout << "done." << endl;
-      //cout << "Size of linear system: " << A.GetGlobalNumRows() << endl;
+      cout << "Size of linear system: " << A.GetGlobalNumRows() << endl;
    }
-    
-    /*
+
    // 14. Define and apply a parallel PCG solver for A X = B with the BoomerAMG
    //     preconditioner from hypre.
-   HypreBoomerAMG *amg = new HypreBoomerAMG(A);
-   if (amg_elast && !a->StaticCondensationIsEnabled())
-   {
-      amg->SetElasticityOptions(fespace);
-   }
-   else
-   {
-      amg->SetSystemsOptions(dim, reorder_space);
-   }
-   HyprePCG *pcg = new HyprePCG(A);
-   pcg->SetTol(1e-8);
-   pcg->SetMaxIter(500);
-   pcg->SetPrintLevel(2);
-   pcg->SetPreconditioner(*amg);
-   pcg->Mult(B, X);*/
+   LORSolver<HypreBoomerAMG> prec(*a, ess_tdof_list);
 
-    std::cout << "Before PC" << std::endl;
-    //ParLORDiscretization lor(*a, ess_tdof_list);
-   // SparseMatrix &A_lor = lor.GetAssembledMatrix();
-   // cout << "Size of LOR system: " << A_lor.Height() << endl;
-    LORSolver<HypreBoomerAMG> prec(*a, ess_tdof_list);
-    std::cout << "Before Solve" << std::endl;
-    
-    CGSolver cg(MPI_COMM_WORLD);
-    cg.SetAbsTol(0.0);
-    cg.SetRelTol(1e-12);
-    cg.SetMaxIter(50000);
-    cg.SetPrintLevel(1);
-    cg.SetOperator(*A);
-    cg.SetPreconditioner(prec);
-    cg.Mult(B, X);
-    double fnorm = cg.GetFinalNorm();
-    
-    std::cout << "Solved!" << std::endl;
+   CGSolver cg(MPI_COMM_WORLD);
+   cg.SetAbsTol(0.0);
+   cg.SetRelTol(1e-12);
+   cg.SetMaxIter(50000);
+   cg.SetPrintLevel(1);
+   cg.SetOperator(A);
+   cg.SetPreconditioner(prec);
+   cg.Mult(B, X);
 
    // 15. Recover the parallel grid function corresponding to X. This is the
    //     local finite element solution on each processor.
@@ -348,8 +319,7 @@ int main(int argc, char *argv[])
    }
 
    // 19. Free the used memory.
- //  delete pcg;
-  // delete amg;
+   delete cg;
    delete a;
    delete b;
    if (fec)
