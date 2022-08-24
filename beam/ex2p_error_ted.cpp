@@ -64,6 +64,7 @@ int main(int argc, char *argv[])
    bool amg_elast = 0;
    bool reorder_space = false;
    const char *device_config = "cpu";
+   const char *geometry = "beam";
    int ref_levels = 0;
 
    OptionsParser args(argc, argv);
@@ -84,6 +85,8 @@ int main(int argc, char *argv[])
                   "Use byNODES ordering of vector space instead of byVDIM");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
+   args.AddOption(&geometry, "-g", "--geometry",
+                  "Problem geometry, choose between: beam, plate or seat.");
    args.AddOption(&ref_levels, "-l", "--hlevel",
                   "Level of h refinement.");
    args.Parse();
@@ -132,10 +135,8 @@ int main(int argc, char *argv[])
    //    'ref_levels' to be the largest number that gives a final mesh with no
    //    more than 1,000 elements.
    {
-     cout << "Number of elements " << mesh->GetNE() << endl;
-     // int ref_levels =
-     //  (int)floor(log(500./mesh->GetNE())/log(2.)/dim);
-      cout << ">>> Refinement level: " << ref_levels << endl;
+      cout << "Number of elements: " << mesh->GetNE() << endl;
+      cout << "Refinement level: "   << ref_levels    << endl;
       for (int l = 0; l < ref_levels; l++)
       {
          mesh->UniformRefinement();
@@ -192,10 +193,30 @@ int main(int argc, char *argv[])
    //    boundary dofs. In this example, the boundary conditions are defined by
    //    marking only boundary attribute 1 from the mesh as essential and
    //    converting it to a list of true dofs.
-   Array<int> ess_tdof_list, ess_bdr(pmesh->bdr_attributes.Max());
-   ess_bdr = 0;
-   ess_bdr[20] = 1;
-   fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+   Array<int> ess_tdof_plist, ess_tdof_list, ess_bdr(pmesh->bdr_attributes.Max());
+   if (!strcmp(geometry, "beam"))
+   {
+      ess_bdr = 0;
+      ess_bdr[20] = 1;
+      fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+   }
+   else if (!strcmp(geometry, "plate"))
+   {
+      ess_bdr = 0;
+      ess_bdr[8] = 1;
+      fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_plist, 0);
+      ess_tdof_list.Append(ess_tdof_plist);
+      ess_bdr = 0;
+      ess_bdr[5] = 1;
+      fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_plist, 1);
+      ess_tdof_list.Append(ess_tdof_plist);
+   }
+   else if (!strcmp(geometry, "seat"))
+   {
+      ess_bdr = 0;
+      ess_bdr[230] = 1;
+      fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+   }
 
    // 10. Set up the parallel linear form b(.) which corresponds to the
    //     right-hand side of the FEM linear system. In this case, b_i equals the
@@ -213,8 +234,21 @@ int main(int argc, char *argv[])
    {
       Vector pull_force(pmesh->bdr_attributes.Max());
       pull_force = 0.0;
-      pull_force(21) = -.2e-2;
-      f.Set(dim-1, new PWConstCoefficient(pull_force));
+      if (!strcmp(geometry, "beam"))
+      {
+         pull_force(21) = -.2e-2;
+         f.Set(dim-1, new PWConstCoefficient(pull_force));
+      }
+      else if (!strcmp(geometry, "plate"))
+      {
+         pull_force(6) = -10;
+         f.Set(dim-2, new PWConstCoefficient(pull_force));
+      }
+      else if (!strcmp(geometry, "seat"))
+      {
+         pull_force(231) = -1;
+         f.Set(dim-3, new PWConstCoefficient(pull_force));
+      }
    }
 
    ParLinearForm *b = new ParLinearForm(fespace);
@@ -235,12 +269,24 @@ int main(int argc, char *argv[])
    //     corresponding to the linear elasticity integrator with piece-wise
    //     constants coefficient lambda and mu.
    Vector lambda(pmesh->attributes.Max());
-   lambda = 1.0;
-   lambda(22) = lambda(23);
-   PWConstCoefficient lambda_func(lambda);
    Vector mu(pmesh->attributes.Max());
-   mu = 1.0;
-   mu(22) = mu(23);
+   if (!strcmp(geometry, "beam"))
+   {
+      lambda = 1.0;
+      mu = 1.0;
+   }
+   else if (!strcmp(geometry, "plate"))
+   {
+      double E = 2e11, v = 0.3;
+      lambda = (E * v)/((1+v)*(1-2.0*v));
+      mu = E/(2.0*(1.0+v));
+   }
+   else if (!strcmp(geometry, "seat"))
+   {
+      lambda = 1.0;
+      mu = 1.0;
+   }
+   PWConstCoefficient lambda_func(lambda);
    PWConstCoefficient mu_func(mu);
 
    ParBilinearForm *a = new ParBilinearForm(fespace);
@@ -285,14 +331,20 @@ int main(int argc, char *argv[])
    //     local finite element solution on each processor.
    a->RecoverFEMSolution(X, *b, x);
 
-   cout << "myid = " << myid << endl;
-
-   VectorFunctionCoefficient D(dim, D_exact);
-   double error = x.ComputeL2Error(D);
+   if (!strcmp(geometry, "beam"))
+   {
+      VectorFunctionCoefficient D(dim, D_exact);
+      double error = x.ComputeL2Error(D);
    
-   if(myid == 0)
-     cout << "\n|| d_h - d ||_{L^2} = " << error << '\n' << endl;
-   
+      if(myid == 0)
+         cout << "\n|| d_h - d ||_{L^2} = " << error << '\n' << endl;
+   }
+   else if (!strcmp(geometry, "plate"))
+   {
+   }
+   else if (!strcmp(geometry, "seat"))
+   {
+   }
    
    // 16. For non-NURBS meshes, make the mesh curved based on the finite element
    //     space. This means that we define the mesh elements through a fespace
