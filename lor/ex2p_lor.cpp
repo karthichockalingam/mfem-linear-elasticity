@@ -258,7 +258,8 @@ int main(int argc, char *argv[])
 
    // 14. Define and apply a parallel PCG solver for A X = B with the BoomerAMG
    //     preconditioner from hypre.
-   LORSolver<HypreBoomerAMG> prec(*a, ess_tdof_list);
+   LORSolver<HypreSmoother> prec(*a, ess_tdof_list);
+   prec.GetSolver().SetType(HypreSmoother::Jacobi);
 
    CGSolver cg(MPI_COMM_WORLD);
    cg.SetAbsTol(0.0);
@@ -319,7 +320,6 @@ int main(int argc, char *argv[])
    }
 
    // 19. Free the used memory.
-   delete cg;
    delete a;
    delete b;
    if (fec)
