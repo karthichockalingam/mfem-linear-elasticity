@@ -406,9 +406,6 @@ int main(int argc, char *argv[])
    return 0;
 }
 
-
-
-
 void D_exact(const Vector &x, Vector &D)
 {
   double force, I, Dmod, lamda, mu, L;
