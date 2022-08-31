@@ -42,6 +42,7 @@
 #include "mfem.hpp"
 #include <fstream>
 #include <iostream>
+#include <ctime>
 
 using namespace std;
 using namespace mfem;
@@ -62,6 +63,7 @@ int main(int argc, char *argv[])
    bool amg_elast = 0;
    bool reorder_space = false;
    const char *device_config = "cpu";
+   int ref_levels = 0;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -81,6 +83,8 @@ int main(int argc, char *argv[])
                   "Use byNODES ordering of vector space instead of byVDIM");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
+   args.AddOption(&ref_levels, "-l", "--hlevel", "Level of h refinement.");
+
    args.Parse();
    if (!args.Good())
    {
@@ -127,8 +131,7 @@ int main(int argc, char *argv[])
    //    'ref_levels' to be the largest number that gives a final mesh with no
    //    more than 1,000 elements.
    {
-      int ref_levels =
-         (int)floor(log(1000./mesh->GetNE())/log(2.)/dim);
+     // int ref_levels = (int)floor(log(1000./mesh->GetNE())/log(2.)/dim);
       for (int l = 0; l < ref_levels; l++)
       {
          mesh->UniformRefinement();
@@ -141,7 +144,7 @@ int main(int argc, char *argv[])
    ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, *mesh);
    delete mesh;
    {
-      int par_ref_levels = 1;
+      int par_ref_levels = 0;
       for (int l = 0; l < par_ref_levels; l++)
       {
          pmesh->UniformRefinement();
@@ -187,7 +190,8 @@ int main(int argc, char *argv[])
    //    converting it to a list of true dofs.
    Array<int> ess_tdof_list, ess_bdr(pmesh->bdr_attributes.Max());
    ess_bdr = 0;
-   ess_bdr[0] = 1;
+   ess_bdr[20] = 1;
+    //ess_bdr[0] = 1;
    fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
 
    // 10. Set up the parallel linear form b(.) which corresponds to the
@@ -206,7 +210,8 @@ int main(int argc, char *argv[])
    {
       Vector pull_force(pmesh->bdr_attributes.Max());
       pull_force = 0.0;
-      pull_force(1) = -1.0e-2;
+   //   pull_force(1) = -1.0e-2;
+       pull_force(21) = -.2e-2;
       f.Set(dim-1, new PWConstCoefficient(pull_force));
    }
 
@@ -229,11 +234,11 @@ int main(int argc, char *argv[])
    //     constants coefficient lambda and mu.
    Vector lambda(pmesh->attributes.Max());
    lambda = 1.0;
-   lambda(0) = lambda(1)*50;
+   //lambda(0) = lambda(1)*50;
    PWConstCoefficient lambda_func(lambda);
    Vector mu(pmesh->attributes.Max());
    mu = 1.0;
-   mu(0) = mu(1)*50;
+   // mu(0) = mu(1)*50;
    PWConstCoefficient mu_func(mu);
 
    ParBilinearForm *a = new ParBilinearForm(fespace);
@@ -258,17 +263,36 @@ int main(int argc, char *argv[])
 
    // 14. Define and apply a parallel PCG solver for A X = B with the BoomerAMG
    //     preconditioner from hypre.
-   LORSolver<HypreSmoother> prec(*a, ess_tdof_list);
-   prec.GetSolver().SetType(HypreSmoother::Jacobi);
+
+
+   std::clock_t c_start;
+
+   if (myid == 0)
+      c_start = std::clock();
+
+ // LORSolver<HypreSmoother> prec(*a, ess_tdof_list);
+ // prec.GetSolver().SetType(HypreSmoother::Jacobi);
+  LORSolver<HypreBoomerAMG> prec(*a, ess_tdof_list);
+
 
    CGSolver cg(MPI_COMM_WORLD);
-   cg.SetAbsTol(0.0);
+   cg.SetAbsTol(1e-4);
    cg.SetRelTol(1e-12);
    cg.SetMaxIter(50000);
    cg.SetPrintLevel(1);
    cg.SetOperator(A);
    cg.SetPreconditioner(prec);
    cg.Mult(B, X);
+
+
+   if (myid == 0)
+   {
+    std::clock_t c_end = std::clock();
+
+    long double time_elapsed_ms = 1000.0 * (c_end-c_start) / CLOCKS_PER_SEC;
+   // std::cout << "CPU time used: " << time_elapsed_ms << " ms\n";
+    std::cout << "CPU time used: " << time_elapsed_ms / 1000.0 << " s\n";
+   }
 
    // 15. Recover the parallel grid function corresponding to X. This is the
    //     local finite element solution on each processor.
