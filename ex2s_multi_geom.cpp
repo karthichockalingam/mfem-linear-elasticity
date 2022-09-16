@@ -56,6 +56,9 @@ int main(int argc, char *argv[])
    bool visualization = 1;
    const char *geometry = "beam";
    int ref_levels = 0;
+   int higher_order = 4;
+   const char *file = "xxx_";
+   const char *solution_file;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -71,6 +74,10 @@ int main(int argc, char *argv[])
                   "Problem geometry, choose between: beam, plate or seat.");
    args.AddOption(&ref_levels, "-l", "--hlevel",
                   "Level of h refinement.");
+   args.AddOption(&file, "-f", "--fileout", "Name of the output file.");
+   args.AddOption(&solution_file, "-s2", "--solution2","Grid function for higher order solution.");
+   args.AddOption(&higher_order, "-ho", "--higher_order","Finite element order (higher order polynomial degree).");
+
    args.Parse();
    if (!args.Good())
    {
@@ -117,8 +124,9 @@ int main(int argc, char *argv[])
    //    dimension is specified by the last argument of the FiniteElementSpace
    //    constructor. For NURBS meshes, we use the (degree elevated) NURBS space
    //    associated with the mesh nodes.
-   FiniteElementCollection *fec;
-   FiniteElementSpace *fespace;
+   FiniteElementCollection *fec, *fec_ho;
+   FiniteElementSpace *fespace, *fespace_ho;
+
    if (mesh->NURBSext)
    {
       fec = NULL;
@@ -129,6 +137,16 @@ int main(int argc, char *argv[])
       fec = new H1_FECollection(order, dim);
       fespace = new FiniteElementSpace(mesh, fec, dim);
    }
+
+
+   if (!strcmp(geometry, "plate"))
+   {
+      fec_ho = new H1_FECollection(higher_order, dim);
+      fespace_ho = new FiniteElementSpace(mesh, fec_ho, dim);
+   }
+
+
+
    cout << "Number of finite element unknowns: " << fespace->GetTrueVSize()
         << endl << "Assembling: " << flush;
 
@@ -272,6 +290,17 @@ int main(int argc, char *argv[])
    }
    else if (!strcmp(geometry, "plate"))
    {
+      GridFunction prolonged_coarse_function(fespace_ho);
+      Operator* referenceOperator = nullptr;
+      referenceOperator = new PRefinementTransferOperator(*fespace, *fespace_ho);
+      referenceOperator->Mult(x, prolonged_coarse_function);
+
+      ifstream mat_stream(solution_file);
+      GridFunction ho_gf(mesh, mat_stream);
+      ho_gf *= -1;
+      VectorGridFunctionCoefficient ho_gf_co(&ho_gf);
+      double error = prolonged_coarse_function.ComputeL2Error(ho_gf_co);
+      cout << "\n|| d_h - d ||_{L^2} = " << error << '\n' << endl;
    }
    else if (!strcmp(geometry, "seat"))
    {
@@ -294,13 +323,24 @@ int main(int argc, char *argv[])
    //     viewed later using GLVis: "glvis -m displaced.mesh -g sol.gf".
    {
       GridFunction *nodes = mesh->GetNodes();
+      std::cout << "No. of nodes on the grid: " << mesh->GetNodes()->Size() << std::endl;
       *nodes += x;
       x *= -1;
-      ofstream mesh_ofs("displaced.mesh");
+    
+      std::string s = file;
+      string meshfile_name = s + "mesh.";
+      string solfile_name = s + "sol.";
+       
+      ostringstream mesh_name, sol_name;
+      mesh_name << meshfile_name << setfill('0') << setw(6);
+      sol_name << solfile_name << setfill('0') << setw(6);
+
+      ofstream mesh_ofs(mesh_name.str().c_str());
       mesh_ofs.precision(8);
       mesh->Print(mesh_ofs);
-      ofstream sol_ofs("sol.gf");
-      sol_ofs.precision(8);
+
+      ofstream sol_ofs(sol_name.str().c_str());
+      sol_ofs.precision(32);
       x.Save(sol_ofs);
    }
 

@@ -66,6 +66,9 @@ int main(int argc, char *argv[])
    const char *device_config = "cpu";
    const char *geometry = "beam";
    int ref_levels = 0;
+   int higher_order = 4;
+   const char *file = "xxx_";
+   const char *solution_file;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -89,6 +92,10 @@ int main(int argc, char *argv[])
                   "Problem geometry, choose between: beam, plate or seat.");
    args.AddOption(&ref_levels, "-l", "--hlevel",
                   "Level of h refinement.");
+   args.AddOption(&file, "-f", "--fileout", "Name of the output file.");
+   args.AddOption(&solution_file, "-s2", "--solution2","Grid function for higher order solution.");
+   args.AddOption(&higher_order, "-ho", "--higher_order","Finite element order (higher order polynomial degree).");
+
    args.Parse();
    if (!args.Good())
    {
@@ -162,8 +169,9 @@ int main(int argc, char *argv[])
    //    the FiniteElementSpace constructor) which is expected in the systems
    //    version of BoomerAMG preconditioner. For NURBS meshes, we use the
    //    (degree elevated) NURBS space associated with the mesh nodes.
-   FiniteElementCollection *fec;
-   ParFiniteElementSpace *fespace;
+   FiniteElementCollection *fec, *fec_ho;
+   ParFiniteElementSpace *fespace, *fespace_ho;
+
    const bool use_nodal_fespace = pmesh->NURBSext && !amg_elast;
    if (use_nodal_fespace)
    {
@@ -182,6 +190,14 @@ int main(int argc, char *argv[])
          fespace = new ParFiniteElementSpace(pmesh, fec, dim, Ordering::byVDIM);
       }
    }
+
+
+   if (!strcmp(geometry, "plate"))
+   {
+      fec_ho = new H1_FECollection(higher_order, dim);
+      fespace_ho = new ParFiniteElementSpace(pmesh, fec_ho, dim, Ordering::byVDIM);
+   }
+
    HYPRE_BigInt size = fespace->GlobalTrueVSize();
    if (myid == 0)
    {
@@ -341,6 +357,17 @@ int main(int argc, char *argv[])
    }
    else if (!strcmp(geometry, "plate"))
    {
+      GridFunction prolonged_coarse_function(fespace_ho);
+      Operator* referenceOperator = nullptr;
+      referenceOperator = new PRefinementTransferOperator(*fespace, *fespace_ho);
+      referenceOperator->Mult(x, prolonged_coarse_function);
+
+      ifstream mat_stream(solution_file);
+      GridFunction ho_gf(pmesh, mat_stream);
+      ho_gf *= -1;
+      VectorGridFunctionCoefficient ho_gf_co(&ho_gf);
+      double error = prolonged_coarse_function.ComputeL2Error(ho_gf_co);
+      cout << "\n|| d_h - d ||_{L^2} = " << error << '\n' << endl;
    }
    else if (!strcmp(geometry, "seat"))
    {
@@ -363,19 +390,24 @@ int main(int argc, char *argv[])
    //     can be viewed later using GLVis: "glvis -np <np> -m mesh -g sol".
    {
       GridFunction *nodes = pmesh->GetNodes();
+      std::cout << "No. of nodes on the grid: " << pmesh->GetNodes()->Size() << std::endl;
       *nodes += x;
       x *= -1;
-
+    
+      std::string s = file;
+      string meshfile_name = s + "mesh.";
+      string solfile_name = s + "sol.";
+       
       ostringstream mesh_name, sol_name;
-      mesh_name << "mesh." << setfill('0') << setw(6) << myid;
-      sol_name << "sol." << setfill('0') << setw(6) << myid;
+      mesh_name << meshfile_name << setfill('0') << setw(6) << myid;
+      sol_name << solfile_name << setfill('0') << setw(6) << myid;
 
       ofstream mesh_ofs(mesh_name.str().c_str());
       mesh_ofs.precision(8);
       pmesh->Print(mesh_ofs);
 
       ofstream sol_ofs(sol_name.str().c_str());
-      sol_ofs.precision(8);
+      sol_ofs.precision(32);
       x.Save(sol_ofs);
    }
 

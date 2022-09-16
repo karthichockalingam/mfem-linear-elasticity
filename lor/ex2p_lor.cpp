@@ -270,8 +270,8 @@ int main(int argc, char *argv[])
    if (myid == 0)
       c_start = std::clock();
 
- // LORSolver<HypreSmoother> prec(*a, ess_tdof_list);
- // prec.GetSolver().SetType(HypreSmoother::Jacobi);
+  //LORSolver<HypreSmoother> prec(*a, ess_tdof_list);
+//  prec.GetSolver().SetType(HypreSmoother::Jacobi);
   LORSolver<HypreBoomerAMG> prec(*a, ess_tdof_list);
 
 
